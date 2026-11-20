@@ -1,0 +1,11 @@
+client/node_modules/
+client/dist/
+server/target/
+
+.idea/
+.vscode/
+
+*.log
+.env
+.env.*
+!.env.example

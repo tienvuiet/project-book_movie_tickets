@@ -1,0 +1,73 @@
+﻿spring:
+  application:
+    name: cinemabooking-server
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/cinemabooking?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:123456}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 25MB
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${MAIL_USERNAME:tienxinhzai241@gmail.com}
+    password: ${MAIL_APP_PASSWORD:ejawzmjibxoifrsz}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2s
+server:
+  port: 8080
+app:
+  time-zone: ${APP_TIME_ZONE:Asia/Ho_Chi_Minh}
+  chat:
+    outbox-relay-delay-ms: ${CHAT_OUTBOX_RELAY_DELAY_MS:200}
+    outbox-relay-initial-delay-ms: ${CHAT_OUTBOX_RELAY_INITIAL_DELAY_MS:500}
+    presence-refresh-ms: ${CHAT_PRESENCE_REFRESH_MS:10000}
+    presence-ttl-seconds: ${CHAT_PRESENCE_TTL_SECONDS:30}
+  geocoding:
+    base-url: ${NOMINATIM_BASE_URL:https://nominatim.openstreetmap.org}
+    user-agent: ${NOMINATIM_USER_AGENT:CinemaBooking/1.0}
+  cors:
+    allowed-origin-patterns: "http://localhost:*,http://127.0.0.1:*"
+  booking:
+    seat-lock-ttl-minutes: ${BOOKING_SEAT_LOCK_TTL_MINUTES:1}
+    expiration-reconciliation-delay-ms: ${BOOKING_EXPIRATION_RECONCILIATION_DELAY_MS:30000}
+    expiration-reconciliation-initial-delay-ms: ${BOOKING_EXPIRATION_RECONCILIATION_INITIAL_DELAY_MS:10000}
+  jwt:
+    secret: ${JWT_SECRET:cinema-booking-secret-key-must-be-at-least-256-bits-for-hmac-sha256}
+    access-token-expiration-ms: 900000
+    refresh-token-expiration-ms: 604800000
+  cloudinary:
+    cloud-name: ${CLOUDINARY_CLOUD_NAME:dgdtw2vlj}
+    api-key: ${CLOUDINARY_API_KEY:575948444684623}
+    api-secret: ${CLOUDINARY_API_SECRET:NvgLG7P_KYQ3plvB5i1Zo51oGpI}
+  payos:
+    # Điền 3 khóa lấy từ Kênh thanh toán trên my.payos.vn.
+    client-id: ${PAYOS_CLIENT_ID:49a10ab5-34ef-4ef1-977a-7ba3b078a2ff}
+    api-key: ${PAYOS_API_KEY:e1306cbb-e02b-40ec-a3ec-4c376ab64829}
+    checksum-key: ${PAYOS_CHECKSUM_KEY:58c4dd2500b2602001a1843dee82a5903e3cbefaa2c33744f46bd89f2af33aae}
+    frontend-base-url: http://localhost:5173
+  password-reset:
+    otp-expiration-minutes: ${PASSWORD_RESET_OTP_EXPIRATION_MINUTES:5}
+    resend-delay-seconds: ${PASSWORD_RESET_RESEND_DELAY_SECONDS:60}
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
