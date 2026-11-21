@@ -1,0 +1,220 @@
+name: Build and deploy production
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: cinema-booking-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/cinema-booking-frontend
+  BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/cinema-booking-backend
+
+jobs:
+  verify:
+    name: Verify source
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Verify frontend
+        working-directory: client
+        run: |
+          npm ci --no-audit --no-fund
+          npm run lint
+          npm run test
+          npm run build
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v6.3.0
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          cache-dependency-path: server/pom.xml
+
+      - name: Verify backend
+        working-directory: server
+        run: mvn --batch-mode --no-transfer-progress verify
+
+  publish:
+    name: Build and publish images
+    needs: verify
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4.8.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v7.2.0
+        with:
+          context: ./client
+          file: ./client/Dockerfile
+          push: true
+          tags: ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+          provenance: true
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v7.2.0
+        with:
+          context: ./server
+          file: ./server/Dockerfile
+          push: true
+          tags: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+          provenance: true
+
+  deploy:
+    name: Deploy to VPS
+    needs: publish
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > ~/.ssh/cinema_deploy
+          chmod 600 ~/.ssh/cinema_deploy
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Authenticate VPS to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | ssh \
+            -i ~/.ssh/cinema_deploy \
+            -p "$VPS_PORT" \
+            "$VPS_USER@$VPS_HOST" \
+            "docker login ghcr.io --username '$GHCR_USER' --password-stdin"
+
+      - name: Deploy SHA and verify health
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          ssh -i ~/.ssh/cinema_deploy -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
+            "bash -s -- '$DEPLOY_SHA' '$FRONTEND_IMAGE' '$BACKEND_IMAGE'" <<'REMOTE_SCRIPT'
+          set -Eeuo pipefail
+
+          deploy_sha="$1"
+          frontend_image="$2"
+          backend_image="$3"
+          deploy_dir=/opt/project-book_movie_tickets
+
+          cd "$deploy_dir"
+          test -f .env
+          git fetch --depth=1 origin main
+          git checkout --detach "$deploy_sha"
+
+          export IMAGE_TAG="$deploy_sha"
+          export FRONTEND_IMAGE="$frontend_image"
+          export BACKEND_IMAGE="$backend_image"
+
+          compose=(docker compose --env-file .env -f docker-compose.prod.yml)
+          state_dir="$deploy_dir/.deploy"
+          mkdir -p "$state_dir"
+          current_tag=""
+          if [[ -f "$state_dir/current-image-tag" ]]; then
+            current_tag="$(<"$state_dir/current-image-tag")"
+          fi
+
+          wait_healthy() {
+            local service="$1"
+            local attempts="${2:-40}"
+            local container_id status
+            for ((i=1; i<=attempts; i++)); do
+              container_id="$("${compose[@]}" ps -q "$service")"
+              if [[ -n "$container_id" ]]; then
+                status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")"
+                if [[ "$status" == "healthy" ]]; then
+                  return 0
+                fi
+                if [[ "$status" == "unhealthy" || "$status" == "exited" || "$status" == "dead" ]]; then
+                  break
+                fi
+              fi
+              sleep 5
+            done
+            "${compose[@]}" ps
+            "${compose[@]}" logs --tail=100 "$service"
+            return 1
+          }
+
+          rollback() {
+            if [[ -z "$current_tag" || "$current_tag" == "$deploy_sha" ]]; then
+              echo "No previous image tag is available for automatic rollback" >&2
+              return 1
+            fi
+            echo "Deployment failed; rolling application containers back to $current_tag" >&2
+            export IMAGE_TAG="$current_tag"
+            "${compose[@]}" up -d --no-deps backend
+            wait_healthy backend 30
+            "${compose[@]}" up -d --no-deps frontend
+            wait_healthy frontend 20
+          }
+
+          if ! "${compose[@]}" config --quiet; then
+            exit 1
+          fi
+
+          if ! "${compose[@]}" pull frontend backend; then
+            rollback || true
+            exit 1
+          fi
+
+          if ! "${compose[@]}" up -d mysql redis \
+             || ! wait_healthy mysql 30 \
+             || ! wait_healthy redis 20 \
+             || ! "${compose[@]}" up -d --no-deps backend \
+             || ! wait_healthy backend 40 \
+             || ! "${compose[@]}" up -d --no-deps frontend \
+             || ! wait_healthy frontend 20; then
+            rollback || true
+            exit 1
+          fi
+
+          if [[ -n "$current_tag" && "$current_tag" != "$deploy_sha" ]]; then
+            printf '%s\n' "$current_tag" > "$state_dir/previous-image-tag"
+          fi
+          printf '%s\n' "$deploy_sha" > "$state_dir/current-image-tag"
+          "${compose[@]}" ps
+          REMOTE_SCRIPT

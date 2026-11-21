@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Cinema Booking MySQL backup
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 Asia/Ho_Chi_Minh
+Persistent=true
+RandomizedDelaySec=10m
+Unit=cinema-booking-backup.service
+
+[Install]
+WantedBy=timers.target

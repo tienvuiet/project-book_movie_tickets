@@ -1,0 +1,12 @@
+[Unit]
+Description=Backup Cinema Booking MySQL database
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=DEPLOY_DIR=/opt/project-book_movie_tickets
+ExecStart=/usr/bin/bash /opt/project-book_movie_tickets/scripts/backup-mysql.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

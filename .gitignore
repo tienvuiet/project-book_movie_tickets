@@ -9,3 +9,23 @@ server/target/
 .env
 .env.*
 !.env.example
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+id_rsa*
+id_ed25519*
+
+# Database dumps and local backups
+backups/
+*.sql.gz
+*.dump
+*.bak
+backup-*.sql
+dump-*.sql
+
+# Deployment state is managed on the VPS
+.deploy/

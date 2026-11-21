@@ -40,14 +40,19 @@ class BookingServiceImplTest {
         authenticate("customer@example.com");
         var customer = User.builder().id(1L).email("customer@example.com").build();
         var showtime = showtime(10L, cinema(1L));
+        var seat = Seat.builder().id(5L).room(showtime.getRoom()).row("A").number(1)
+                .type(SeatType.NORMAL).active(true).build();
         when(userRepository.findByEmail("customer@example.com")).thenReturn(Optional.of(customer));
         when(showtimeRepository.findById(10L)).thenReturn(Optional.of(showtime));
+        when(seatRepository.findAllById(Set.of(5L))).thenReturn(List.of(seat));
+        when(seatLockService.acquire(10L, Set.of(5L), 1L)).thenReturn(true);
+        when(showtimeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(showtime));
         when(bookingSeatRepository.existsReservedSeats(10L, Set.of(5L), Set.of(BookingStatus.PENDING, BookingStatus.PAID)))
                 .thenReturn(true);
 
         assertThrows(BusinessException.class, () -> service.createBooking(new BookingRequest(10L, Set.of(5L), null)));
         verify(bookingRepository, never()).save(any());
-        verify(seatLockService, never()).acquire(anyLong(), anyCollection(), anyLong());
+        verify(seatLockService).acquire(10L, Set.of(5L), 1L);
     }
 
     @Test
